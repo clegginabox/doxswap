@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Blaspsoft\Doxswap;
 
 use Blaspsoft\Doxswap\Doxswap;
@@ -28,7 +30,10 @@ class DoxswapServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/config.php', 'doxswap');
 
         $this->app->bind('doxswap', function () {
-            return new Doxswap(new ConversionService());
+            new ConversionService(
+                config('libre_office_path'),
+                config('libre_office_args'),
+            );
         });
     }
 }

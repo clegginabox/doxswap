@@ -8,7 +8,7 @@ class UnsupportedMimeTypeException extends Exception
 {
     public function __construct(string $extension)
     {
-        $message = "Unsupported MIME type for extension: {$extension}";
+        $message = "Unsupported MIME type : {$extension}";
         parent::__construct($message, 0); // Note the integer 0 for code
     }
 }

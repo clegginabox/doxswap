@@ -17,9 +17,10 @@
     }
   ],
   "require": {
-    "php": "^8.2",
+    "php": ">=8.0",
     "blaspsoft/onym": "^1.0",
-    "illuminate/support": "^8.0|^9.0|^10.0|^11.0|^12.0"
+    "illuminate/support": "^8.0|^9.0|^10.0|^11.0|^12.0",
+    "symfony/mime": "^7.2"
   },
   "require-dev": {
     "orchestra/testbench": "^10.0",
@@ -34,6 +35,9 @@
     "psr-4": {
       "Blaspsoft\\Doxswap\\Tests\\": "tests"
     }
+  },
+  "suggest": {
+    "ext-fileinfo": "Suggested for MIME type detection."
   },
   "scripts": {
     "test": "vendor/bin/phpunit",

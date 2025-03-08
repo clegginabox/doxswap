@@ -6,9 +6,11 @@ use Exception;
 
 class UnsupportedConversionException extends Exception
 {
-    public function __construct(string $fromExtension, string $toExtension)
+    public function __construct(array $fromExtensions, string $toExtension)
     {
-        $message = "Conversion from '{$fromExtension}' to '{$toExtension}' is not supported";
+        $extensions = implode(',', $fromExtensions);
+
+        $message = "Conversion from '{$extensions}' to '{$toExtension}' is not supported";
         parent::__construct($message, 0); // Note the integer 0 for code
     }
 }

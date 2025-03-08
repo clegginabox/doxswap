@@ -1,126 +1,99 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Blaspsoft\Doxswap;
 
-use Exception;
-use Blaspsoft\Onym\Facades\Onym;
-use Illuminate\Support\Facades\File;
-use Symfony\Component\Process\Process;
-use Illuminate\Support\Facades\Storage;
 use Blaspsoft\Doxswap\Exceptions\ConversionFailedException;
-use Blaspsoft\Doxswap\Exceptions\UnsupportedMimeTypeException;
-use Symfony\Component\Process\Exception\ProcessFailedException;
 use Blaspsoft\Doxswap\Exceptions\UnsupportedConversionException;
+use Blaspsoft\Doxswap\Exceptions\UnsupportedMimeTypeException;
+use League\Flysystem\FilesystemAdapter;
+use Symfony\Component\Mime\MimeTypes;
+use Symfony\Component\Process\Process;
+use Symfony\Component\Process\Exception\ProcessFailedException;
 
 class ConversionService
 {
-    /**
-     * The mime types.
-     *
-     * @var array
-     */
-    protected $mimeTypes;
+    protected ?string $libreOfficePath;
 
-    /**
-     * The disk.
-     *
-     * @var string
-     */
-    protected $inputDisk;
+    protected ?string $libreOfficeArgs;
 
-    /**
-     * The output disk.
-     *
-     * @var string
-     */
-    protected $outputDisk;
+    protected MimeTypes $mimeTypes;
 
-    /**
-     * The supported conversions.
-     *
-     * @var array
-     */
-    protected $supportedConversions;
-
-    /**
-     * The libre office path.
-     *
-     * @var string
-     */
-    protected $libreOfficePath;
-
-    /**
-     * The perform cleanup.
-     *
-     * @var bool
-     */
-    protected $performCleanup;
-
-    public function __construct(?string $inputDisk = null, ?string $outputDisk = null)
+    public function __construct(?string $libreOfficePath = null, ?string $libreOfficeArgs = null)
     {
-        $this->inputDisk = $inputDisk ?? config('doxswap.input_disk');
-        $this->outputDisk = $outputDisk ?? config('doxswap.output_disk');
-        $this->supportedConversions = config('doxswap.supported_conversions');
-        $this->mimeTypes = config('doxswap.mime_types');
-        $this->performCleanup = config('doxswap.perform_cleanup');
-        $this->libreOfficePath = config('doxswap.libre_office_path');
+        $this->libreOfficePath = $libreOfficePath;
+        $this->libreOfficeArgs = $libreOfficeArgs;
+        $this->mimeTypes = new MimeTypes();
     }
-   
-    /**
-     * Process the file conversion.
-     *
-     * @param string $filename
-     * @param string $toExtension
-     * @return string
-     * @throws Exception
-     */
-    public function convertFile(string $filename, string $toExtension): string
-    {
-        if (empty($filename)) {
-            throw new ConversionFailedException('File is empty');
-        }
 
-        if (!Storage::disk($this->inputDisk)->exists($filename)) {
+    /**
+     * @param FilesystemAdapter $sourceFs
+     * @param string $sourceFilePath
+     * @param FilesystemAdapter $destinationFs
+     * @param string $destinationFilePath
+     * @param string $conversionType Make this an enum?
+     *
+     * @return string
+     *
+     * @throws ConversionFailedException
+     * @throws UnsupportedConversionException
+     * @throws UnsupportedMimeTypeException
+     */
+    public function convertFile(
+        FilesystemAdapter $sourceFs,
+        string $sourceFilePath,
+        FilesystemAdapter $destinationFs,
+        string $destinationFilePath,
+        string $conversionType
+    ): string
+    {
+        if (!$sourceFs->fileExists($sourceFilePath)) {
             throw new ConversionFailedException('File does not exist');
         }
 
-        $filePath = Storage::disk($this->inputDisk)->path($filename);
-        $fromExtension = pathinfo($filePath, PATHINFO_EXTENSION);
+        /**
+         * https://symfony.com/doc/current/components/mime.html#guessing-the-mime-type
+         */
+        $sourceFileMimeType = $this->mimeTypes->guessMimeType($sourceFilePath);
 
-        if (!$this->isSupportedMimeType($fromExtension)) {
-            throw new UnsupportedMimeTypeException($fromExtension);
+        if (!$this->isSupportedMimeType($sourceFileMimeType)) {
+            throw new UnsupportedMimeTypeException($sourceFileMimeType);
         }
 
-        if (!$this->isSupportedConversion($fromExtension, $toExtension)) {
-            throw new UnsupportedConversionException($fromExtension, $toExtension);
+        $sourceFileExtensions = $this->mimeTypes->getExtensions($sourceFileMimeType);
+
+        if (!$this->isSupportedConversion($sourceFileExtensions, $conversionType)) {
+            throw new UnsupportedConversionException($sourceFileExtensions, $conversionType);
         }
 
         try {
-            $this->process($filePath, $toExtension);
-            $outputPath = $this->renameConvertedFile($filePath, $toExtension);
+            $this->process($sourceFilePath, $conversionType, $destinationFs->path($destinationFilePath));
         } catch (ProcessFailedException $e) {
             throw new ConversionFailedException($e->getMessage());
-        } finally {
-            $this->cleanup($filename);
         }
 
-        return $outputPath;
+        return $destinationFilePath;
     }
 
     /**
      * Process the file conversion
      *
+     * @param string $sourceFilePath
      * @param string $format
-     * @return self
+     * @param string $destinationFilePath
+     *
+     * @return void
      */
-    protected function process(string $filePath, string $format): void
+    protected function process(string $sourceFilePath, string $format, string $destinationFilePath): void
     {
         $command = [
             $this->libreOfficePath,
+            $this->libreOfficeArgs,
             '--headless',
             '--convert-to', $format ,
-            '--outdir', Storage::disk($this->outputDisk)->path(''),
-            $filePath,
+            '--outdir', $destinationFilePath,
+            $sourceFilePath,
         ];
 
         $process = new Process($command);
@@ -134,53 +107,41 @@ class ConversionService
      /**
      * Check if the conversion is supported.
      *
-     * @param string $fromExtension
+     * @param array $sourceExtensions
      * @param string $toExtension
      * @return bool
      */
-    protected function isSupportedConversion(string $fromExtension, string $toExtension): bool
+    protected function isSupportedConversion(array $sourceExtensions, string $toExtension): bool
     {
-        return isset($this->supportedConversions[$fromExtension]) &&
-               in_array($toExtension, $this->supportedConversions[$fromExtension]);
+        $supportedConversions = Config::supportedConversions();
+
+        $matchingSource = array_filter($sourceExtensions, static function ($source) use ($supportedConversions) {
+            return array_key_exists($source, $supportedConversions);
+        });
+
+        $firstMatchingSource = reset($matchingSource);
+
+        return in_array($toExtension, $supportedConversions[$firstMatchingSource]);
     }
 
     /**
      * Check if the mime type is supported.
      *
-     * @param string $extension
+     * @param string $mimeType
      * @return bool
      */
-    protected function isSupportedMimeType(string $extension): bool
+    protected function isSupportedMimeType(string $mimeType): bool
     {
-        return isset($this->mimeTypes[$extension]);
-    }
+        $symfonyMimeType = $this->mimeTypes;
 
-    /**
-     * Cleanup the input file.
-     *
-     * @param string $filename
-     * @return void
-     */
-    protected function cleanup(string $filename): void
-    {
-        if ($this->performCleanup) {
-            Storage::disk($this->inputDisk)->delete($filename);
-        }
-    }
+        $supportedMimeTypes = array_merge(...array_map(static function ($type) use ($symfonyMimeType) {
+            return $symfonyMimeType->getMimeTypes($type);
+        }, Config::supportedFileExtensions()));
 
-    /**
-     * Rename the file.
-     *
-     * @param string $filePath
-     * @param string $toExtension
-     * @return string
-     */
-    protected function renameConvertedFile(string $filePath, string $toExtension): string
-    {
-        $originalOutputFilePath = Storage::disk($this->outputDisk)->path('') . File::name($filePath) . '.' . $toExtension;
-        $filename = Onym::make(strategy: 'random', extension: $toExtension, options: ['length' => 24]);
-        $newOutputFilePath = Storage::disk($this->outputDisk)->path($filename);
-        File::move($originalOutputFilePath, $newOutputFilePath);
-        return $newOutputFilePath;
+        return in_array(
+            $mimeType,
+            $supportedMimeTypes,
+            true
+        );
     }
 }
